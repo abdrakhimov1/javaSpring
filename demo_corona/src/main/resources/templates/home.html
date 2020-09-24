@@ -23,20 +23,32 @@
 </div>
 
 <div class = "container">
-<table class="table table-dark">
+<table class="table table-bordered">
     <tr>
-        <th>State</th>
         <th>Country</th>
         <th>Total cases reported</th>
-        <th>Changes since last day</th>
+        <th>Total diff for today</th>
+        <th>Cases for each state (if country has states)</th>
     </tr>
 
-    <tr th:each="locationStat : ${locationStats}">
+    <tr th:each="country : ${countries}">
 
-        <td th:text="${locationStat.state}"></td>
-        <td th:text="${locationStat.country}"></td>
-        <td th:text="${locationStat.latestTotal}">0</td>
-        <td th:text="${locationStat.diffFromPrevDay}">0</td>
+        <td th:text="${country.getCountryName()}"></td>
+        <td th:text="${country.getStats()}"></td>
+        <td th:text="${country.getPrevStats()}"></td>
+        <td>
+        <table class="table table-sm">
+            <tr>
+                <th>State</th>
+                <th>Total diff for today</th>
+                <th>Total cases</th>
+            </tr>
+            <tr th:each="state : ${country.getStates()}">
+                <td th:text="${state.getName()}"></td>
+                <td th:text="${state.getPrevStat()}"></td>
+                <td th:text="${state.getStat()}">0</td>
+        </table>
+        </td>
     </tr>
 </table>
 </div>

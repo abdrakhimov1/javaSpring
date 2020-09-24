@@ -1,5 +1,6 @@
 package com.abdrakhimov.demo_corona.controllers;
 
+import com.abdrakhimov.demo_corona.models.Country;
 import com.abdrakhimov.demo_corona.models.LocationStats;
 import com.abdrakhimov.demo_corona.services.CoronaVirusServices;
 import org.springframework.stereotype.Controller;
@@ -20,14 +21,13 @@ public class HomeController {
 
     @GetMapping("/")
     public String home(Model model) {
-        List<LocationStats> allStats = coronaVirusServices.getAllStats();
-        int totalCases = allStats.stream().mapToInt(stat -> stat.getLatestTotal()).sum();
-        int diffFromPrevDay = allStats.stream().mapToInt(stat -> stat.getDiffFromPrevDay()).sum();
-        model.addAttribute("locationStats", allStats);
+        List<Country> allStats = coronaVirusServices.getAllStats();
+        int totalCases = allStats.stream().mapToInt(stat -> stat.getStats()).sum();
+        int totalCasesYesterday = allStats.stream().mapToInt(stat -> stat.getPrevStats()).sum();
+        int diffFromPrevDay = totalCases - totalCasesYesterday;
+        model.addAttribute("countries", allStats);
         model.addAttribute("totalCases", totalCases);
         model.addAttribute("diffFromPrevDay", diffFromPrevDay);
-
-
         return "home";
     }
 }

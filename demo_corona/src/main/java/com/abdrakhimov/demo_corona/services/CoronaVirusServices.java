@@ -1,8 +1,12 @@
 package com.abdrakhimov.demo_corona.services;
 
+import com.abdrakhimov.demo_corona.database.CountryRepository;
+import com.abdrakhimov.demo_corona.models.Country;
 import com.abdrakhimov.demo_corona.models.LocationStats;
+import com.abdrakhimov.demo_corona.models.State;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +19,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -22,40 +27,101 @@ public class CoronaVirusServices {
 
     private static String VIRUS_DATA_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv";
 
-    private List<LocationStats> allStats = new ArrayList<>();
+    private List<Country> allStats;
+
+    private String yesterday;
+    private String today;
 
 
-    public List<LocationStats> getAllStats() {
+    @Autowired
+    CountryRepository repository;
+
+    public List<Country> getAllStats() {
         return allStats;
+    }
+
+    private String[] getTodayAndYesterday() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(VIRUS_DATA_URL))
+                .build();
+        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+        StringReader csvBodyReader = new StringReader(httpResponse.body());
+        List<String> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader).getHeaderNames();
+        return new String[] {records.get(records.size() - 1), records.get(records.size() - 2)};
+    }
+
+    private List<CSVRecord> requestVirusData() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(VIRUS_DATA_URL))
+                .build();
+        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+        StringReader csvBodyReader = new StringReader(httpResponse.body());
+        List<CSVRecord> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader).getRecords();
+        String[] todayAndYesterday = getTodayAndYesterday();
+        this.today = todayAndYesterday[0];
+        this.yesterday = todayAndYesterday[1];
+        return records;
+    }
+
+    private List<State> recordsList(List<CSVRecord> records, Country country){
+        return records
+                .stream()
+                .filter(o -> !o.get("Province/State").isEmpty())
+                .collect(Collectors.groupingBy(record -> record.get("Province/State")))
+                .entrySet()
+                .stream()
+                .map(k -> {
+                    return new State(k.getKey(), country, k.getValue()
+                            .stream()
+                            .mapToInt(r -> Integer.valueOf(r.get(this.today)))
+                            .sum(), k.getValue()
+                            .stream()
+                            .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
+                            .sum());
+                }).collect(Collectors.toList());
+    }
+
+    private List<Country> parseCSVData() throws IOException, InterruptedException {
+        return requestVirusData()
+                .stream()
+                .collect(Collectors.groupingBy(record -> record.get("Country/Region")))
+                .entrySet()
+                .stream()
+                .map(countryRecords -> {
+                    Country country = new Country();
+                    String countryName = countryRecords.getKey();
+                    List<CSVRecord> records = countryRecords.getValue();
+                    List<State> stateList = recordsList(records, country);
+                    country.setCountryName(countryName);
+                    country.setStates(stateList);
+                    country.setStats(countryRecords.getValue()
+                            .stream()
+                            .mapToInt(r -> Integer.valueOf(r.get(this.today)))
+                            .sum());
+                    country.setPrevStats(countryRecords.getValue()
+                            .stream()
+                            .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
+                            .sum());
+                    return country;
+                })
+                .collect(Collectors.toList());
     }
 
     @PostConstruct
     @Scheduled(cron = "* * 1 * * *")
     public void fetchVirusData() throws IOException, InterruptedException {
 
-        List<LocationStats> newStats = new ArrayList<>();
-
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(VIRUS_DATA_URL))
-                .build();
-        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        StringReader csvBodyReader = new StringReader(httpResponse.body());
-        Iterable<CSVRecord> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader);
-
-        for (CSVRecord record : records) {
-
-            LocationStats locationStat = new LocationStats();
-            locationStat.setState(record.get("Province/State"));
-            locationStat.setCountry(record.get("Country/Region"));
-            int latestCases = Integer.parseInt(record.get(record.size() - 1));
-            int prevDayCases = Integer.parseInt(record.get(record.size() - 2));
-            locationStat.setLatestTotal(latestCases);
-            locationStat.setDiffFromPrevDay(latestCases - prevDayCases);
-            newStats.add(locationStat);
+        if (this.allStats == null) {
+            List<Country> countryList = parseCSVData();
+            repository.deleteAll();
+            repository.saveAll(countryList);
+            this.allStats = countryList;
+        } else {
 
         }
-        this.allStats = newStats;
+
+
     }
 }
