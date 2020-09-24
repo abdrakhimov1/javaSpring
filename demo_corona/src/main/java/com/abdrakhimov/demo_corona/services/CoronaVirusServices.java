@@ -19,6 +19,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 
@@ -58,11 +59,23 @@ public class CoronaVirusServices {
                 .build();
         HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
         StringReader csvBodyReader = new StringReader(httpResponse.body());
+
         List<CSVRecord> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader).getRecords();
+
         String[] todayAndYesterday = getTodayAndYesterday();
         this.today = todayAndYesterday[0];
         this.yesterday = todayAndYesterday[1];
         return records;
+    }
+
+    private State buildState(Map.Entry<String, List<CSVRecord>> k, Country country) {
+        return new State(k.getKey(), country, k.getValue()
+                .stream()
+                .mapToInt(r -> Integer.valueOf(r.get(this.today)))
+                .sum(), k.getValue()
+                .stream()
+                .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
+                .sum());
     }
 
     private List<State> recordsList(List<CSVRecord> records, Country country){
@@ -72,15 +85,21 @@ public class CoronaVirusServices {
                 .collect(Collectors.groupingBy(record -> record.get("Province/State")))
                 .entrySet()
                 .stream()
-                .map(k -> {
-                    return new State(k.getKey(), country, k.getValue()
-                            .stream()
-                            .mapToInt(r -> Integer.valueOf(r.get(this.today)))
-                            .sum(), k.getValue()
-                            .stream()
-                            .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
-                            .sum());
-                }).collect(Collectors.toList());
+                .map(k -> buildState(k, country)).collect(Collectors.toList());
+    }
+
+    private Country setCountryAll(String countryName, List<State> stateList, Country country, Map.Entry<String, List<CSVRecord>> countryRecords) {
+        country.setCountryName(countryName);
+        country.setStates(stateList);
+        country.setStats(countryRecords.getValue()
+                .stream()
+                .mapToInt(r -> Integer.valueOf(r.get(this.today)))
+                .sum());
+        country.setPrevStats(countryRecords.getValue()
+                .stream()
+                .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
+                .sum());
+        return country;
     }
 
     private List<Country> parseCSVData() throws IOException, InterruptedException {
@@ -94,16 +113,7 @@ public class CoronaVirusServices {
                     String countryName = countryRecords.getKey();
                     List<CSVRecord> records = countryRecords.getValue();
                     List<State> stateList = recordsList(records, country);
-                    country.setCountryName(countryName);
-                    country.setStates(stateList);
-                    country.setStats(countryRecords.getValue()
-                            .stream()
-                            .mapToInt(r -> Integer.valueOf(r.get(this.today)))
-                            .sum());
-                    country.setPrevStats(countryRecords.getValue()
-                            .stream()
-                            .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
-                            .sum());
+                    country = setCountryAll(countryName, stateList, country, countryRecords);
                     return country;
                 })
                 .collect(Collectors.toList());
@@ -112,7 +122,6 @@ public class CoronaVirusServices {
     @PostConstruct
     @Scheduled(cron = "* * 1 * * *")
     public void fetchVirusData() throws IOException, InterruptedException {
-
         if (this.allStats == null) {
             List<Country> countryList = parseCSVData();
             repository.deleteAll();
@@ -121,7 +130,5 @@ public class CoronaVirusServices {
         } else {
 
         }
-
-
     }
 }
