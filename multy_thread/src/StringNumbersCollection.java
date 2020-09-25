@@ -1,6 +1,5 @@
 import java.util.Arrays;
 import java.util.List;
-import java.util.Scanner;
 import java.util.TreeMap;
 
 public class StringNumbersCollection{
@@ -12,13 +11,23 @@ public class StringNumbersCollection{
     }
 
     public long changeTree(){
-        Long lowestKey = map.firstKey();
-        map.remove(lowestKey);
-        return lowestKey;
+        synchronized (map) {
+            if(!map.isEmpty()) {
+                Long lowestKey = map.firstKey();
+                map.remove(lowestKey);
+                return lowestKey;
+            }else {
+                return -1;
+            }
+        }
     }
 
     public void addElement(String element) {
-        map.put(stringNumbToLong(element), null);
+        synchronized (map) {
+            long input = stringNumbToLong(element);
+            System.out.println(input);
+            map.put(stringNumbToLong(element), null);
+        }
     }
 
     private long stringNumbToLong(String input) {
