@@ -22,7 +22,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 
 @Service
@@ -54,27 +53,18 @@ public class CoronaVirusServices {
         repository.saveAll(countries);
     }
 
-    private List<Country> getActualCountriesStats() throws IOException, InterruptedException {
+    private static List<Country> getActualCountriesStats() throws IOException, InterruptedException {
         return requestVirusData()
                 .stream()
                 .collect(Collectors.groupingBy(ParsedRecord::getCountry))
                 .entrySet()
                 .stream()
                 .map(entry -> new GrouppedRecords(entry.getKey(), entry.getValue()))
-                .map(this::buildCountry)
+                .map(CoronaVirusServices::buildCountry)
                 .collect(Collectors.toList());
     }
 
-    private Country buildCountry(GrouppedRecords countryRecords) {
-        List<ParsedRecord> records = countryRecords.getRecords();
-        Country country = getCountryFromRecords(countryRecords);
-        List<State> states = getCountryStatesFromRecords(records);
-        states.forEach(state -> state.setCountry(country));
-        country.setStates(states);
-        return country;
-    }
-
-    private List<ParsedRecord> requestVirusData() throws IOException, InterruptedException {
+    private static List<ParsedRecord> requestVirusData() throws IOException, InterruptedException {
         StringReader csvBodyReader = requestActualData();
 
         CSVParser parser = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader);
@@ -87,7 +77,16 @@ public class CoronaVirusServices {
                 .collect(Collectors.toList());
     }
 
-    private ParsedRecord parseCsvRecord(CSVRecord record, String todayHeader, String yesterdayHeader) {
+    private static Country buildCountry(GrouppedRecords countryRecords) {
+        List<ParsedRecord> records = countryRecords.getRecords();
+        Country country = getCountryFromRecords(countryRecords);
+        List<State> states = getCountryStatesFromRecords(records);
+        states.forEach(state -> state.setCountry(country));
+        country.setStates(states);
+        return country;
+    }
+
+    private static ParsedRecord parseCsvRecord(CSVRecord record, String todayHeader, String yesterdayHeader) {
         return new ParsedRecord(
                 record.get(COUNTRY_HEADER),
                 record.get(STATE_HEADER),
@@ -116,7 +115,7 @@ public class CoronaVirusServices {
         return new TodayAndYesterdayHeaders(todayHeader, yesterdayHeader);
     }
 
-    private List<State> getCountryStatesFromRecords(List<ParsedRecord> records) {
+    private static List<State> getCountryStatesFromRecords(List<ParsedRecord> records) {
         return records
                 .stream()
                 .filter(record -> !record.getState().isEmpty())
@@ -130,12 +129,12 @@ public class CoronaVirusServices {
 
     private static State buildStateWithoutCountry(GrouppedRecords data) {
 
-        int todayStateStats = data.records
+        int todayStateStats = data.getRecords()
                 .stream()
                 .mapToInt(ParsedRecord::getStatsToday)
                 .sum();
 
-        int yesterdayStateStats = data.records
+        int yesterdayStateStats = data.getRecords()
                 .stream()
                 .mapToInt(ParsedRecord::getStatsToday)
                 .sum();
@@ -143,7 +142,7 @@ public class CoronaVirusServices {
         return new State(data.getName(), null, todayStateStats, yesterdayStateStats);
     }
 
-    private Country getCountryFromRecords(GrouppedRecords countryRecords) {
+    private static Country getCountryFromRecords(GrouppedRecords countryRecords) {
         List<ParsedRecord> countryRecordsWithoutState =
                 countryRecords.getRecords()
                         .stream()
@@ -151,11 +150,11 @@ public class CoronaVirusServices {
                         .collect(Collectors.toList());
 
         int countryCurrentStats = countryRecordsWithoutState.stream()
-                .mapToInt(record -> record.statsToday)
+                .mapToInt(ParsedRecord::getStatsToday)
                 .sum();
 
         int countryYesterdayStats = countryRecordsWithoutState.stream()
-                .mapToInt(record -> record.statsYesterday)
+                .mapToInt(ParsedRecord::getStatsYesterday)
                 .sum();
 
 
@@ -165,13 +164,6 @@ public class CoronaVirusServices {
                 countryCurrentStats,
                 countryYesterdayStats
         );
-    }
-
-    private static int calculateStatsForRecordsAtDate(List<CSVRecord> records, String date) {
-        return records.stream()
-                .map(csvRecord -> csvRecord.get(date))
-                .mapToInt(Integer::parseInt)
-                .sum();
     }
 
 
