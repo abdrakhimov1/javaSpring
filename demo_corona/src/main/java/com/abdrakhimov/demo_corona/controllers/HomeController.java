@@ -3,6 +3,7 @@ package com.abdrakhimov.demo_corona.controllers;
 import com.abdrakhimov.demo_corona.models.Country;
 import com.abdrakhimov.demo_corona.models.LocationStats;
 import com.abdrakhimov.demo_corona.services.CoronaVirusServices;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,14 +11,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import java.util.List;
 
 @Controller
+@RequiredArgsConstructor
 public class HomeController {
 
 
-    final CoronaVirusServices coronaVirusServices;
-
-    public HomeController(CoronaVirusServices coronaVirusServices) {
-        this.coronaVirusServices = coronaVirusServices;
-    }
+    private final CoronaVirusServices coronaVirusServices;
 
     @GetMapping("/")
     public String home(Model model) {

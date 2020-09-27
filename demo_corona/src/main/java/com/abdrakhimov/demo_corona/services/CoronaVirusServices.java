@@ -2,13 +2,16 @@ package com.abdrakhimov.demo_corona.services;
 
 import com.abdrakhimov.demo_corona.database.CountryRepository;
 import com.abdrakhimov.demo_corona.models.Country;
-import com.abdrakhimov.demo_corona.models.LocationStats;
 import com.abdrakhimov.demo_corona.models.State;
+import lombok.Data;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
 import java.io.IOException;
@@ -17,118 +20,172 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 
 @Service
+@RequiredArgsConstructor
 public class CoronaVirusServices {
 
     private static String VIRUS_DATA_URL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv";
+    private static final String COUNTRY_HEADER = "Country/Region";
+    private static final String STATE_HEADER = "Province/State";
 
+
+    private final CountryRepository repository;
+
+    @Getter
     private List<Country> allStats;
 
-    private String yesterday;
-    private String today;
-
-
-    @Autowired
-    CountryRepository repository;
-
-    public List<Country> getAllStats() {
-        return allStats;
-    }
-
-    private String[] getTodayAndYesterday() throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(VIRUS_DATA_URL))
-                .build();
-        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
-        StringReader csvBodyReader = new StringReader(httpResponse.body());
-        List<String> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader).getHeaderNames();
-        return new String[] {records.get(records.size() - 1), records.get(records.size() - 2)};
-    }
-
-    private List<CSVRecord> requestVirusData() throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(VIRUS_DATA_URL))
-                .build();
-        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
-        StringReader csvBodyReader = new StringReader(httpResponse.body());
-
-        List<CSVRecord> records = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader).getRecords();
-
-        String[] todayAndYesterday = getTodayAndYesterday();
-        this.today = todayAndYesterday[0];
-        this.yesterday = todayAndYesterday[1];
-        return records;
-    }
-
-    private State buildState(Map.Entry<String, List<CSVRecord>> k, Country country) {
-        return new State(k.getKey(), country, k.getValue()
-                .stream()
-                .mapToInt(r -> Integer.valueOf(r.get(this.today)))
-                .sum(), k.getValue()
-                .stream()
-                .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
-                .sum());
-    }
-
-    private List<State> recordsList(List<CSVRecord> records, Country country){
-        return records
-                .stream()
-                .filter(o -> !o.get("Province/State").isEmpty())
-                .collect(Collectors.groupingBy(record -> record.get("Province/State")))
-                .entrySet()
-                .stream()
-                .map(k -> buildState(k, country)).collect(Collectors.toList());
-    }
-
-    private Country setCountryAll(String countryName, List<State> stateList, Country country, Map.Entry<String, List<CSVRecord>> countryRecords) {
-        country.setCountryName(countryName);
-        country.setStates(stateList);
-        country.setStats(countryRecords.getValue()
-                .stream()
-                .mapToInt(r -> Integer.valueOf(r.get(this.today)))
-                .sum());
-        country.setPrevStats(countryRecords.getValue()
-                .stream()
-                .mapToInt(r -> Integer.valueOf(r.get(this.yesterday)))
-                .sum());
-        return country;
-    }
-
-    private List<Country> parseCSVData() throws IOException, InterruptedException {
-        return requestVirusData()
-                .stream()
-                .collect(Collectors.groupingBy(record -> record.get("Country/Region")))
-                .entrySet()
-                .stream()
-                .map(countryRecords -> {
-                    Country country = new Country();
-                    String countryName = countryRecords.getKey();
-                    List<CSVRecord> records = countryRecords.getValue();
-                    List<State> stateList = recordsList(records, country);
-                    country = setCountryAll(countryName, stateList, country, countryRecords);
-                    return country;
-                })
-                .collect(Collectors.toList());
-    }
 
     @PostConstruct
     @Scheduled(cron = "* * 1 * * *")
     public void fetchVirusData() throws IOException, InterruptedException {
-        if (this.allStats == null) {
-            List<Country> countryList = parseCSVData();
-            repository.deleteAll();
-            repository.saveAll(countryList);
-            this.allStats = countryList;
-        } else {
-
-        }
+        List<Country> actualCountries = getActualCountriesStats();
+        updateDatabaseData(actualCountries);
+        this.allStats = actualCountries;
     }
+
+    @Transactional
+    protected void updateDatabaseData(List<Country> countries) {
+        repository.deleteAll();
+        repository.saveAll(countries);
+    }
+
+    private static List<Country> getActualCountriesStats() throws IOException, InterruptedException {
+        return requestVirusData()
+                .stream()
+                .collect(Collectors.groupingBy(ParsedRecord::getCountry))
+                .entrySet()
+                .stream()
+                .map(entry -> new GrouppedRecords(entry.getKey(), entry.getValue()))
+                .map(CoronaVirusServices::buildCountry)
+                .collect(Collectors.toList());
+    }
+
+    private static List<ParsedRecord> requestVirusData() throws IOException, InterruptedException {
+        StringReader csvBodyReader = requestActualData();
+
+        CSVParser parser = CSVFormat.RFC4180.withFirstRecordAsHeader().parse(csvBodyReader);
+
+        TodayAndYesterdayHeaders todayAndYesterday = getTodayAndYesterday(parser.getHeaderNames());
+
+        return parser.getRecords()
+                .stream()
+                .map(record -> parseCsvRecord(record, todayAndYesterday.getToday(), todayAndYesterday.getYesterday()))
+                .collect(Collectors.toList());
+    }
+
+    private static Country buildCountry(GrouppedRecords countryRecords) {
+        List<ParsedRecord> records = countryRecords.getRecords();
+        Country country = getCountryFromRecords(countryRecords);
+        List<State> states = getCountryStatesFromRecords(records);
+        states.forEach(state -> state.setCountry(country));
+        country.setStates(states);
+        return country;
+    }
+
+    private static ParsedRecord parseCsvRecord(CSVRecord record, String todayHeader, String yesterdayHeader) {
+        return new ParsedRecord(
+                record.get(COUNTRY_HEADER),
+                record.get(STATE_HEADER),
+                Integer.parseInt(record.get(todayHeader)),
+                Integer.parseInt(record.get(yesterdayHeader))
+        );
+    }
+
+    private static StringReader requestActualData() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(VIRUS_DATA_URL))
+                .build();
+        HttpResponse<String> httpResponse = client.send(request, HttpResponse.BodyHandlers.ofString());
+        return new StringReader(httpResponse.body());
+    }
+
+
+    private static TodayAndYesterdayHeaders getTodayAndYesterday(List<String> headers) {
+        int todayHeaderPosition = headers.size() - 1;
+        int yesterdayHeaderPosition = headers.size() - 2;
+
+        String todayHeader = headers.get(todayHeaderPosition);
+        String yesterdayHeader = headers.get(yesterdayHeaderPosition);
+
+        return new TodayAndYesterdayHeaders(todayHeader, yesterdayHeader);
+    }
+
+    private static List<State> getCountryStatesFromRecords(List<ParsedRecord> records) {
+        return records
+                .stream()
+                .filter(record -> !record.getState().isEmpty())
+                .collect(Collectors.groupingBy(ParsedRecord::getState))
+                .entrySet()
+                .stream()
+                .map(entry -> new GrouppedRecords(entry.getKey(), entry.getValue()))
+                .map(CoronaVirusServices::buildStateWithoutCountry)
+                .collect(Collectors.toList());
+    }
+
+    private static State buildStateWithoutCountry(GrouppedRecords data) {
+
+        int todayStateStats = data.getRecords()
+                .stream()
+                .mapToInt(ParsedRecord::getStatsToday)
+                .sum();
+
+        int yesterdayStateStats = data.getRecords()
+                .stream()
+                .mapToInt(ParsedRecord::getStatsToday)
+                .sum();
+
+        return new State(data.getName(), null, todayStateStats, yesterdayStateStats);
+    }
+
+    private static Country getCountryFromRecords(GrouppedRecords countryRecords) {
+        List<ParsedRecord> countryRecordsWithoutState =
+                countryRecords.getRecords()
+                        .stream()
+                        .filter(record -> record.getState().isEmpty())
+                        .collect(Collectors.toList());
+
+        int countryCurrentStats = countryRecordsWithoutState.stream()
+                .mapToInt(ParsedRecord::getStatsToday)
+                .sum();
+
+        int countryYesterdayStats = countryRecordsWithoutState.stream()
+                .mapToInt(ParsedRecord::getStatsYesterday)
+                .sum();
+
+
+        return new Country(
+                null,
+                countryRecords.getName(),
+                countryCurrentStats,
+                countryYesterdayStats
+        );
+    }
+
+
+    @Data
+    private static class TodayAndYesterdayHeaders {
+        private final String today;
+        private final String yesterday;
+    }
+
+
+    @Data
+    private static class GrouppedRecords {
+        private final String name;
+        private final List<ParsedRecord> records;
+    }
+
+    @Data
+    private static class ParsedRecord {
+        private final String country;
+        private final String state;
+        private final int statsToday;
+        private final int statsYesterday;
+    }
+
 }
