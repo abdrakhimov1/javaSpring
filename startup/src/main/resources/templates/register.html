@@ -9,8 +9,8 @@
 <h1>Create a Person:</h1>
 
 
-<form th:action="@{/users/register}"
-      th:object="${user}" method="POST">
+<form th:action="@{/register}"
+      th:object="${}" method="POST">
     Name:
     <input type="text" th:field="*{name}" />
     <br/>
